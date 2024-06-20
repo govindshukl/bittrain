@@ -1,0 +1,346 @@
+
+
+import os
+from dotenv import load_dotenv
+import openai
+from langchain_community.vectorstores import FAISS, Chroma
+from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
+from crewai import Agent, Task, Crew, Process
+from crewai_tools import BaseTool
+from flask import Flask, request, jsonify
+from langchain.docstore.document import Document
+import os
+os.environ["SERPER_API_KEY"] = "dddd"  # serper.dev API key
+
+import pdfplumber
+from pydantic import BaseModel, Field
+from typing import Union
+
+
+
+
+import os
+from openai import AzureOpenAI
+
+import fitz
+
+
+from crewai_tools import SerperDevTool
+search_tool = SerperDevTool()
+
+# Load environment variables
+load_dotenv()
+
+# Set Azure OpenAI environment variables
+os.environ["AZURE_OPENAI_KEY"] = "dd"
+os.environ["AZURE_OPENAI_ENDPOINT"] = "https://dd.openai.azure.com/"
+os.environ["AZURE_OPENAI_DEPLOYMENT"] = "gpt4o"
+os.environ["AZURE_OPENAI_VERSION"] = "2024-02-15-preview"
+os.environ["AZURE_OPENAI_EMBEDDINGS_MODEL_NAME"] = "adaembedding"
+os.environ['OPENAI_API_KEY'] = os.getenv("AZURE_OPENAI_KEY")
+
+# Configure OpenAI API key and version
+openai.api_key = os.getenv("AZURE_OPENAI_KEY")
+api_version = os.getenv("AZURE_OPENAI_VERSION")
+
+# Initialize Azure services
+llm = AzureChatOpenAI(
+    deployment_name=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+    openai_api_version=api_version
+)
+embedding = AzureOpenAIEmbeddings(
+    azure_deployment=os.getenv("AZURE_OPENAI_EMBEDDINGS_MODEL_NAME"),
+    openai_api_version=api_version,
+)
+
+
+
+import fitz  # PyMuPDF
+
+def extract_first_page_as_string(pdf_file_path):
+    # Open the original PDF file
+    doc = fitz.open(pdf_file_path)
+
+    # Check if the PDF has at least one page
+    if doc.page_count < 1:
+        return "The PDF file has no pages."
+    
+    # Load the first page
+    first_page = doc.load_page(0)
+    
+    # Extract the text from the first page
+    first_page_text = first_page.get_text()
+    
+    # Return the first 100 characters of the extracted text
+    return first_page_text[:1000]
+
+def setup_openai_client():
+    return AzureOpenAI(
+        azure_endpoint="https://openaihumanvaluex.openai.azure.com/",
+        api_key=os.getenv("AZURE_OPENAI_KEY"),
+        api_version="2024-02-01"
+    )
+    
+def page_has_table(page):
+    tables = page.find_tables()
+    return len(tables) > 0
+
+import base64
+from mimetypes import guess_type
+
+# Function to encode a local image into data URL 
+def local_image_to_data_url(image_path):
+    # Guess the MIME type of the image based on the file extension
+    mime_type, _ = guess_type(image_path)
+    if mime_type is None:
+        mime_type = 'application/octet-stream'  # Default MIME type if none is found
+
+    # Read and encode the image file
+    with open(image_path, "rb") as image_file:
+        base64_encoded_data = base64.b64encode(image_file.read()).decode('utf-8')
+
+    # Construct the data URL
+    return f"data:{mime_type};base64,{base64_encoded_data}"
+
+
+
+def save_page_as_image(pdf_document, page_number, output_dir):
+    page = pdf_document.load_page(page_number - 1)
+    pix = page.get_pixmap()
+    image_path = os.path.join(output_dir, f"page_{page_number}.png")
+    pix.save(image_path)
+    return image_path
+
+import os
+import base64
+from mimetypes import guess_type
+
+# Function to encode a local image into data URL 
+def local_image_to_data_url(image_path):
+    mime_type, _ = guess_type(image_path)
+    if mime_type is None:
+        mime_type = 'application/octet-stream'
+    with open(image_path, "rb") as image_file:
+        base64_encoded_data = base64.b64encode(image_file.read()).decode('utf-8')
+    return f"data:{mime_type};base64,{base64_encoded_data}"
+
+def analyze_image(client, image_path, output_text_path):
+    print(f"image_path is {image_path}")
+
+    
+
+    
+    data_url = local_image_to_data_url(image_path)
+   
+    
+    message_text = [
+        {"role": "system", "content": "You are a cool image analyst for annual report. Your goal is to describe the content of image, in case there is table, display the information in TABLE format. Remove unnecessary blank spaces if required."},
+        {"role": "user", "content": [
+            {"type": "text", "text": "What is in the image?"},
+            {"type": "image_url", "image_url": {"url": data_url}}
+        ]}
+    ]
+    
+    completion = client.chat.completions.create(
+        model="gpt4o",
+        messages=message_text,
+        temperature=1.0,
+        max_tokens=4000,
+        top_p=0.95,
+        frequency_penalty=0,
+        presence_penalty=0,
+        stop=None
+    )
+    
+    result = completion.choices[0].message.content
+    with open(output_text_path, "w", encoding="utf-8") as text_file:
+        text_file.write(result)
+
+
+def process_pdf(pdf_path, page_to_analyze):
+    # Create directories for storing output
+    output_dir = "./output/temp"
+    output_text_dir = os.path.join(output_dir, "texts")
+    output_image_dir = os.path.join(output_dir, "images")
+    os.makedirs(output_text_dir, exist_ok=True)
+    os.makedirs(output_image_dir, exist_ok=True)
+    
+    extracted_text = ""
+
+    with pdfplumber.open(pdf_path) as pdf:
+        pdf_document = fitz.open(pdf_path)
+        if page_to_analyze < 1 or page_to_analyze > len(pdf.pages):
+            raise ValueError(f"Page number {page_to_analyze} is out of range.")
+
+        # Load the page
+        
+        
+
+        # Extract image if text is not available
+        page = pdf_document.load_page(page_to_analyze - 1)
+        image_path = os.path.join(output_image_dir, f"page_{page_to_analyze}.png")
+        page.get_pixmap().save(image_path)
+        output_text_path = os.path.join(output_text_dir, f"t_page_{page_to_analyze}.txt")
+        client = setup_openai_client()
+        analyze_image(client, image_path, output_text_path)
+        with open(output_text_path, "r", encoding="utf-8") as text_file:
+            extracted_text += text_file.read()
+
+    return extracted_text
+
+
+class FirstPageImageTool(BaseTool):
+    name: str = "Extracts the first page of the financial statement where in the content in the document is an image"
+    description: str = "return the content of the document in Text format"
+
+    def _run(self, pdf_file_path: str) -> str:
+        # Extract text from the specified page
+        extracted_text = process_pdf(pdf_file_path, page_to_analyze=1)
+        return extracted_text
+
+class FirstPageTextTool(BaseTool):
+    name: str = "Extracts the first page of the financial statement where in the content in the document is an Text"
+    description: str = "return the content of the document in Text format"
+
+    def _run(self, pdf_file_path: str) -> str:
+        # Implementation goes here
+        return extract_first_page_as_string(pdf_file_path)
+
+import sqlite3
+
+import sqlite3
+
+def check_and_insert_company(database_path, company_short_name, company_name):
+    conn = sqlite3.connect(database_path)
+    cursor = conn.cursor()
+
+    try:
+        # Check if the company short name exists
+        check_short_name_query = "SELECT COUNT(*) FROM company WHERE short_name = ?"
+        cursor.execute(check_short_name_query, (company_short_name,))
+        short_name_result = cursor.fetchone()
+
+        if short_name_result[0] > 0:
+            print("Company short name exists")
+            return True
+
+        # Check if the company name exists
+        check_name_query = "SELECT COUNT(*) FROM company WHERE name = ?"
+        cursor.execute(check_name_query, (company_name,))
+        name_result = cursor.fetchone()
+
+        if name_result[0] > 0:
+            print("Company name exists")
+            return True
+
+        # If neither exists, insert the new company
+        print("Company does not exist")
+        insert_query = "INSERT INTO company (name, short_name) VALUES (?, ?)"
+        cursor.execute(insert_query, (company_name, company_short_name))
+        conn.commit()
+        return False
+    except sqlite3.Error as e:
+        print(f"SQLite error: {e}")
+        return None
+    finally:
+        conn.close()
+
+class CheckorAddCompany(BaseTool):
+    name: str = "Add Company to the database"
+    description: str = "Add the name of the company and short name into database for latter reference"
+
+    def _run(self, company_short_name: str, company_name: str) -> str:
+        database_path = 'CompanyInformation.db'
+        print(f"company_short_name: {company_short_name}, company_name: {company_name}")
+        exists = check_and_insert_company(database_path, company_short_name, company_name)
+        print(exists)
+        if exists:
+            return f"Company {company_short_name} or {company_name} already exists in the database."
+        else:
+            return f"Company {company_short_name} has been added to the database."        
+    
+# class FileInfo(BaseModel):
+#     ComnpanyName: str = Field(description=
+#                             """Name of the commpany 
+#                             Following are the rules for name of the company,
+#                             1. The format of the name is :  <company_names><financial_year>. 
+#                             2. only Alphanumeric is allowed.
+#                             3. No special characters are allowed
+#                             4. withour any spaces
+#                             3. First 8 letters apended with year in 4 digits
+#                                 """)
+#     Language: str = Field(description="language in ISO 639-1 format")
+#     DocumentType: Union["Image", "Text"] = Field(description="Type of the content on the page 1 of the financial statement")
+
+
+class FileInfo(BaseModel):
+    CompanyShortName: str
+    CompanyName: str
+    ContentType: str
+    Language: str
+
+
+class FormatCompanyShortName(BaseTool):
+    name: str = "format Company Short Name"
+    description: str = "Formats the name of the company in line with the rules of the company short name"
+
+    def _run(self, company_short_name: str) -> str:
+        # Trim the company name to 20 characters and convert to lowercase
+        trimmed_name = company_short_name[:10].lower()
+        return trimmed_name
+
+savertools = [CheckorAddCompany(), FormatCompanyShortName()]
+
+def page1_financial_statements(file_path):
+    tools = [FirstPageImageTool(), FirstPageTextTool()]
+
+    
+    financial_statement_extractor = Agent(
+        role='Financial Statement Extractor',
+        goal='your job is to extract the company name, Language and content type of the financial statement and save the information in the database',
+        backstory="you are a seasoned financial analyst expert at reading financial statements and extracting the information",
+        llm=llm,
+        verbose=True,
+        allow_delegation=False
+    )
+
+
+    task1 = Task(
+        description=""" extract the information from the file ({file_path})
+        Task instructions are:
+        1. Determine if the content type on the page 1 is image or is an text, this is performed by comparing the out put of the two tools
+        2. Determine the language of the text on the page 1
+        3. Extract the company name from the content of the page 1
+        4. create the company short name using the company name,
+            4.1. only Alphanumeric is allowed.
+            4.2. No special characters are allowed
+            4.3. without any spaces
+            4.4. First 30 Characters of company name
+        5. Following are the rules to determine if the content type is an image of text
+            5.1. if extract of text tool is empty and extract of image tool is not empty then the content type is image
+        """,
+        expected_output="Company Short Name, Company Name, Language, Content Type",
+        agent=financial_statement_extractor,
+        tools=tools,
+        output_json=FileInfo
+,
+    )
+    
+    task2 = Task(
+        description="""Format and then Add the extracted information into the company table for latter reference.
+        """,
+        expected_output="Company Short Name, Company Name, Language, Content Type",
+        agent=financial_statement_extractor,
+        tools=savertools,
+        output_json=FileInfo
+        
+    )
+
+    crew = Crew(
+        agents=[financial_statement_extractor],
+        tasks=[task1, task2],
+        verbose=False
+    )
+
+    result = crew.kickoff(inputs={'file_path': file_path})
+    return result
