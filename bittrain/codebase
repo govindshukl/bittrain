@@ -1,0 +1,162 @@
+# Install with pip install firecrawl-py
+from firecrawl import FirecrawlApp
+
+app = FirecrawlApp(api_key='fc-dddddd')
+
+
+# Scrape a website:
+html_content = app.scrape_url('https://www.reuters.com/', formats=['html'])
+print(html_content)
+
+--------------------------------------------------------
+
+  def extract_readable_text(data):
+    """
+    Extract all readable text from HTML content using BeautifulSoup.
+    
+    Args:
+        data: HTML content as string or object with html attribute
+        
+    Returns:
+        str: Clean readable text from the webpage
+    """
+    from bs4 import BeautifulSoup
+    import re
+    
+    # Extract HTML content from the input
+    if isinstance(data, str) and ('<html' in data or '<!DOCTYPE' in data):
+        html_content = data
+    elif hasattr(data, 'html') and data.html:
+        html_content = data.html
+    else:
+        # Try to extract HTML from the string representation
+        try:
+            if isinstance(data, dict) and 'html' in data:
+                html_content = data['html']
+            else:
+                # Try to extract HTML from the string representation
+                match = re.search(r"html='([^']*)'", str(data))
+                if match:
+                    html_content = match.group(1)
+                else:
+                    return "Error: Could not extract HTML content from input"
+        except:
+            return "Error: Could not extract HTML content from input"
+    
+    # Create BeautifulSoup object
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    # Remove non-content elements
+    for element in soup.select('script, style, meta, link, noscript, iframe'):
+        element.decompose()
+    
+    # Get text and clean it
+    text = soup.get_text(separator=' ', strip=True)
+    
+    # Clean up the text
+    # Remove extra whitespace
+    text = re.sub(r'\s+', ' ', text)
+    
+    # Add paragraph breaks after sentences for readability
+    text = re.sub(r'(\. )', '.\n\n', text)
+    
+    return text.strip()
+
+
+clean_text = extract_readable_text(html_content)
+print(clean_text)
+
+
+------------------------------------------------------------------------
+
+def html_to_clean_markdown(data):
+    """
+    Extract content from HTML and convert it to clean Markdown format without links.
+    
+    Args:
+        data: HTML content as string or object with html attribute
+        
+    Returns:
+        str: Clean content in Markdown format without links
+    """
+    from bs4 import BeautifulSoup
+    import re
+    
+    # Extract HTML content from the input
+    if isinstance(data, str) and ('<html' in data or '<!DOCTYPE' in data):
+        html_content = data
+    elif hasattr(data, 'html') and data.html:
+        html_content = data.html
+    else:
+        # Try to extract HTML from the string representation
+        try:
+            if isinstance(data, dict) and 'html' in data:
+                html_content = data['html']
+            else:
+                # Try to extract HTML from the string representation
+                match = re.search(r"html='([^']*)'", str(data))
+                if match:
+                    html_content = match.group(1)
+                else:
+                    return "Error: Could not extract HTML content from input"
+        except:
+            return "Error: Could not extract HTML content from input"
+    
+    # Create BeautifulSoup object
+    soup = BeautifulSoup(html_content, 'html.parser')
+    
+    # Remove unwanted elements
+    for element in soup.select('script, style, meta, link, iframe, nav, footer, header, aside'):
+        element.decompose()
+    
+    # Process headings (h1-h6)
+    for i in range(1, 7):
+        for heading in soup.find_all(f'h{i}'):
+            text = heading.get_text(strip=True)
+            if text:
+                # Replace the heading with markdown heading
+                heading.replace_with(BeautifulSoup(f"{'#' * i} {text}", 'html.parser'))
+    
+    # Process lists
+    for ul in soup.find_all('ul'):
+        for li in ul.find_all('li'):
+            text = li.get_text(strip=True)
+            if text:
+                # Replace the li with markdown list item
+                li.replace_with(BeautifulSoup(f"* {text}", 'html.parser'))
+    
+    for ol in soup.find_all('ol'):
+        for i, li in enumerate(ol.find_all('li')):
+            text = li.get_text(strip=True)
+            if text:
+                # Replace the li with markdown list item
+                li.replace_with(BeautifulSoup(f"{i+1}. {text}", 'html.parser'))
+    
+    # Remove all links but keep their text content
+    for a in soup.find_all('a'):
+        text = a.get_text(strip=True)
+        a.replace_with(text)
+    
+    # Remove all images
+    for img in soup.find_all('img'):
+        img.decompose()
+    
+    # Get text and clean it
+    text = soup.get_text(separator='\n', strip=True)
+    
+    # Clean up the text
+    # Remove URLs
+    text = re.sub(r'https?://\S+', '', text)
+    text = re.sub(r'www\.\S+', '', text)
+    
+    # Remove email addresses
+    text = re.sub(r'\S+@\S+\.\S+', '', text)
+    
+    # Remove duplicate newlines (more than 2)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text
+
+
+clean_markdown = html_to_clean_markdown(html_content)
+print(clean_markdown)
